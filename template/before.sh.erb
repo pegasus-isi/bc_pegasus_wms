@@ -1,0 +1,63 @@
+# Export the module function if it exists
+
+[[ $(type -t module) == "function" ]] && export -f module
+
+# Find available port to run server on
+port=$(find_port ${host})
+
+# Generate SHA1 encrypted password (requires OpenSSL installed)
+SALT="$(create_passwd 16)"
+password="$(create_passwd 16)"
+PASSWORD_SHA1="$(echo -n "${password}${SALT}" | openssl dgst -sha1 | awk '{print $NF}')"
+
+# The `$CONFIG_FILE` environment variable is exported as it is used in the main
+# `script.sh.erb` file when launching the Jupyter server.
+export CONFIG_FILE="${PWD}/config.py"
+
+# Safari users hit this error https://github.com/jupyterlab/jupyterlab/issues/5486
+# so let's make a new workspace dir that's this job's PWD and copy the defult /lab
+# workspace over there so folks can update it.
+WORKSPACE_DIR="$HOME/.jupyter/lab/workspaces"
+FILES=$(ls $WORKSPACE_DIR)
+
+for FILE in ${FILES[@]}
+do
+  ID=$(jq -r '.metadata.id' $WORKSPACE_DIR/$FILE)
+
+  if [[ $ID == "/lab" ]]; then
+    WORKSPACE_FILE="$WORKSPACE_DIR/$FILE"
+    break
+  fi
+done
+
+if [[ ${WORKSPACE_FILE+x} ]]; then
+  cp $WORKSPACE_FILE .
+fi
+
+export JUPYTERLAB_WORKSPACES_DIR=$PWD
+export jupyter_api="lab"
+
+export NOTEBOOK_ROOT="$HOME"
+
+# Generate Jupyter configuration file with secure file permissions
+(
+umask 077
+cat > "${CONFIG_FILE}" << EOL
+c.KernelSpecManager.ensure_native_kernel = False
+c.NotebookApp.ip = '*'
+<% if context.cluster.match?(/kubernetes/) -%>
+c.NotebookApp.port = 8080
+c.NotebookApp.base_url = '/node/${HOST_CFG}/${PORT_CFG}/'
+c.NotebookApp.terminado_settings = {'shell_command': ['/bin/bash', '--login', '-i']}
+<% else -%>
+c.NotebookApp.port = ${port}
+c.NotebookApp.base_url = '/node/${host}/${port}/'
+<% end -%>
+c.NotebookApp.port_retries = 0
+c.NotebookApp.password = u'sha1:${SALT}:${PASSWORD_SHA1}'
+c.NotebookApp.open_browser = False
+c.NotebookApp.allow_origin = '*'
+c.NotebookApp.notebook_dir = '${NOTEBOOK_ROOT}'
+c.NotebookApp.disable_check_xsrf = True
+EOL
+)

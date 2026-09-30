@@ -1,0 +1,10 @@
+---
+batch_connect:
+  template: "basic"
+  conn_params:
+    - jupyter_api
+script:
+  native:
+    - "--partition=debug"
+    - "--cpus-per-task=<%= num_cores %>"
+    - "--mem=<%= memory_gb %>G"
